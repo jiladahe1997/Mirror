@@ -1,5 +1,7 @@
 # Name,   Type, SubType, Offset,  Size, Flags
 # Note: if you have increased the bootloader size, make sure to update the offsets to avoid overlap
-nvs,      data, nvs,     ,      0x6000,
-phy_init, data, phy,     ,      0x1000,
-factory,  app,  factory, ,      0x180000,
+# nvs分区默认offset 0x8000
+nvs,      data, nvs,     ,      0x6000,   
+phy_init, data, phy,     ,      0x1000, 
+# APP分区，默认offset 0x10000(64K). 设置为2MB
+factory,  app,  factory, ,      0X200000, 

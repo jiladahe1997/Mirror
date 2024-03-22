@@ -122,13 +122,45 @@ void app_main(void)
     /* Wait for Wi-Fi connection */
     xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_EVENT, true, true, portMAX_DELAY);
     set_blink_status(BLINK_STATUS_WIFI_CONNECTED);
-    /* Start main application now */
-    
 
+
+    /* Start main application now */
+    httpd_handle_t* server = start_webserver();
     return;
 
 
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 static void event_handler(void* arg, esp_event_base_t event_base,
                           int32_t event_id, void* event_data)
@@ -263,6 +295,27 @@ static void wifi_prov_print_qr(const char *name, const char *username, const cha
 }
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 void set_blink_status(uint8_t new_blink_status) {
     taskENTER_CRITICAL(&blink_status_spinlock);
     blink_status = new_blink_status;
@@ -309,4 +362,78 @@ static void blink(void *){
                 break;
         }
     }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/* An HTTP GET handler */
+static const httpd_uri_t root = {
+    .uri       = "/",
+    .method    = HTTP_GET,
+    .handler   = root_get_handler
+};
+extern const char html[4691];
+static esp_err_t root_get_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_send(req, html, sizeof(html));
+
+    return ESP_OK;
+}
+
+static httpd_handle_t start_webserver(void)
+{
+    httpd_handle_t server = NULL;
+
+    // Start the httpd server
+    ESP_LOGI(TAG, "Starting server");
+
+    httpd_ssl_config_t conf = HTTPD_SSL_CONFIG_DEFAULT();
+
+    extern const unsigned char servercert_start[] asm("_binary_servercert_pem_start");
+    extern const unsigned char servercert_end[]   asm("_binary_servercert_pem_end");
+    conf.servercert = servercert_start;
+    conf.servercert_len = servercert_end - servercert_start;
+
+    extern const unsigned char prvtkey_pem_start[] asm("_binary_prvtkey_pem_start");
+    extern const unsigned char prvtkey_pem_end[]   asm("_binary_prvtkey_pem_end");
+    conf.prvtkey_pem = prvtkey_pem_start;
+    conf.prvtkey_len = prvtkey_pem_end - prvtkey_pem_start;
+
+
+    esp_err_t ret = httpd_ssl_start(&server, &conf);
+    if (ESP_OK != ret) {
+        ESP_LOGI(TAG, "Error starting server!");
+        return NULL;
+    }
+
+    // Set URI handlers
+    ESP_LOGI(TAG, "Registering URI handlers");
+    httpd_register_uri_handler(server, &root);
+    return server;
 }

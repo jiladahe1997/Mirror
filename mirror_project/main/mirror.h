@@ -27,4 +27,12 @@ void set_blink_status(uint8_t new_blink_status);
 static esp_err_t root_get_handler(httpd_req_t *req);
 static httpd_handle_t start_webserver(void);
 
+
+
+
+
+
+
+
+static void EM4095_recv(void *);
 #endif /* _MIRROR_H_ */

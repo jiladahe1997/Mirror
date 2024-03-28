@@ -36,6 +36,16 @@ static EventGroupHandle_t wifi_event_group;
 #define PROV_TRANSPORT_BLE      "ble"
 #define QRCODE_BASE_URL         "https://espressif.github.io/esp-jumpstart/qrcode.html"
 
+
+//定义ESP32 <------> EM4095 连接的GPIO管脚
+#define GPIO_EM4095_MOD       0
+#define GPIO_EM4095_DEMOD_OUT 1
+#define GPIO_EM4095_SHD       2
+#define GPIO_EM4095_RDY_CLK   3
+#define GPIO_LED              4
+#define GPIO_5V_PPR           5
+
+
 //blink任务
 #define STACK_SIZE 4096
 StaticTask_t xTaskBuffer;
@@ -45,6 +55,8 @@ uint8_t blink_status;
 #define BLINK_STATUS_WIFI_CONNECTED 1
 static portMUX_TYPE blink_status_spinlock = portMUX_INITIALIZER_UNLOCKED;
 
+
+
 void app_main(void)
 {
     esp_err_t ret;
@@ -52,6 +64,8 @@ void app_main(void)
 
     printf("Hello world!\n");
     xTaskCreateStatic(blink, "blink", STACK_SIZE, NULL, tskIDLE_PRIORITY, xStack, &xTaskBuffer);
+    TaskHandle_t EM4095_recv_task_handle;
+    xTaskCreate(EM4095_recv, "EM4095_recv", 4096, NULL, tskIDLE_PRIORITY, &EM4095_recv_task_handle);
 
     ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -314,8 +328,6 @@ static void wifi_prov_print_qr(const char *name, const char *username, const cha
 
 
 
-
-
 void set_blink_status(uint8_t new_blink_status) {
     taskENTER_CRITICAL(&blink_status_spinlock);
     blink_status = new_blink_status;
@@ -328,21 +340,12 @@ static void blink(void *){
 
     //zero-initialize the config structure.
     gpio_config_t io_conf = {};
-    //disable interrupt
     io_conf.intr_type = GPIO_INTR_DISABLE;
-    //set as output mode
     io_conf.mode = GPIO_MODE_OUTPUT;
-    //bit mask of the pins that you want to set,e.g.GPIO18/19
-    io_conf.pin_bit_mask = ((1ULL<<3) | (1ULL<<4) | (1ULL<<5));
-    //disable pull-down mode
+    io_conf.pin_bit_mask = ((1ULL<<GPIO_EM4095_MOD) | (1ULL<<GPIO_EM4095_SHD) | (1ULL<<GPIO_LED) | (1ULL<<GPIO_5V_PPR));
     io_conf.pull_down_en = 0;
-    //disable pull-up mode
     io_conf.pull_up_en = 0;
-    //configure GPIO with the given settings
     gpio_config(&io_conf);
-    gpio_set_level(3, 1);  //红
-    gpio_set_level(4, 1);  //绿
-    gpio_set_level(5, 1);  //蓝
 
     while(1) {
         switch(blink_status) {
@@ -436,4 +439,61 @@ static httpd_handle_t start_webserver(void)
     ESP_LOGI(TAG, "Registering URI handlers");
     httpd_register_uri_handler(server, &root);
     return server;
+}
+
+
+
+
+
+static QueueHandle_t DEMOD_OUT_queue = NULL;
+static QueueHandle_t RDY_CLK_queue = NULL;
+static void IRAM_ATTR DEMOD_OUT_irq_handle(void* arg)
+{
+    uint32_t gpio_num = (uint32_t) arg;
+    xQueueSendFromISR(DEMOD_OUT_queue, &gpio_num, NULL);
+}
+static void IRAM_ATTR RDY_CLK_irq_handle(void* arg)
+{
+    uint32_t gpio_num = (uint32_t) arg;
+    xQueueSendFromISR(RDY_CLK_queue, &gpio_num, NULL);
+}
+static void EM4095_recv(void *){
+    gpio_config_t io_conf = {};
+
+    //DEMOD_OUT浮空输入，双边沿触发
+    memset(&io_conf, 0, sizeof(gpio_config_t));
+    io_conf.intr_type = GPIO_INTR_POSEDGE;
+    io_conf.mode = GPIO_MODE_INPUT;
+    io_conf.pin_bit_mask = ((1ULL<<GPIO_EM4095_DEMOD_OUT));
+    io_conf.pull_down_en = 1;
+    io_conf.pull_up_en = 0;
+    gpio_config(&io_conf);
+
+    //RDY浮空输入，上边沿触发
+    memset(&io_conf, 0, sizeof(gpio_config_t));
+    io_conf.intr_type = GPIO_INTR_POSEDGE;
+    io_conf.mode = GPIO_MODE_INPUT;
+    io_conf.pin_bit_mask = ((1ULL<<GPIO_EM4095_RDY_CLK));
+    io_conf.pull_down_en = 1;
+    io_conf.pull_up_en = 0;
+    gpio_config(&io_conf);
+
+    DEMOD_OUT_queue = xQueueCreate(10, sizeof(uint32_t));
+    RDY_CLK_queue = xQueueCreate(10, sizeof(uint32_t));
+
+    gpio_install_isr_service(0);
+    gpio_isr_handler_add(GPIO_EM4095_DEMOD_OUT, DEMOD_OUT_irq_handle, (void*) GPIO_EM4095_DEMOD_OUT);
+    gpio_isr_handler_add(GPIO_EM4095_RDY_CLK, RDY_CLK_irq_handle, (void*) GPIO_EM4095_RDY_CLK);
+
+    while(1) {
+        uint32_t io_num;
+        if (xQueueReceive(DEMOD_OUT_queue, &io_num, 0)) {
+            printf("GPIO[%"PRIu32"] intr, val: %d\n", io_num, gpio_get_level(io_num));
+        }
+        if (xQueueReceive(RDY_CLK_queue, &io_num, 0)) {
+            printf("GPIO[%"PRIu32"] intr, val: %d\n", io_num, gpio_get_level(io_num));
+        }
+
+
+    }
 }
